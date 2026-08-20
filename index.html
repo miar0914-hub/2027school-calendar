@@ -105,6 +105,24 @@
         return weeksData;
       }, [dates, events]);
 
+      const monthTotals = useMemo(() => {
+        const mTotals = {};
+        weeks.forEach(week => {
+          if (!mTotals[week.month]) mTotals[week.month] = { 1: 0, 2: 0, 3: 0 };
+          [1, 2, 3, 4, 5].forEach(dayIdx => {
+            const day = week.days[dayIdx];
+            if (day) {
+              const isHoliday = day.events.some(e => e.type === 'holiday');
+              [1, 2, 3].forEach(grade => {
+                const noSchool = isHoliday || day.events.some(e => e.noSchoolGrades?.includes(grade));
+                if (!noSchool) mTotals[week.month][grade]++;
+              });
+            }
+          });
+        });
+        return mTotals;
+      }, [weeks]);
+
       useEffect(() => {
         const totals = { 1: 0, 2: 0, 3: 0 };
         weeks.forEach(week => {
@@ -174,8 +192,15 @@
                   const period = startD === endD ? `${startD}` : `${startD}~${endD}`;
 
                   return (
-                    <tr key={`${week.month}-${week.weekNum}`}>
-                      {showMonth && <td rowSpan={rowspan} className="month-header">{week.month}</td>}
+                    <tr key={`${week.month}-${week.weekNum}`} className={showMonth && idx !== 0 ? "border-t-[3px] border-gray-400" : ""}>
+                      {showMonth && (
+                        <td rowSpan={rowspan} className="month-header bg-white">
+                          <div className="flex flex-col items-center justify-center">
+                            <span>{week.month}</span>
+                            <span className="text-xs font-semibold text-indigo-600 mt-1 bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">{monthTotals[week.month][1]}일</span>
+                          </div>
+                        </td>
+                      )}
                       <td>{week.weekNum}</td>
                       <td>{period}</td>
                       {[1, 2, 3, 4, 5].map(dayIdx => {
