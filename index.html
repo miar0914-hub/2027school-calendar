@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2027학년도 연간 학사일정 관리</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <style>
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif; background-color: #f3f4f6; }
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background-color: white; font-size: 0.875rem; }
+    th, td { border: 1px solid #e5e7eb; text-align: center; vertical-align: middle; padding: 0.5rem; }
+    th { background-color: #f9fafb; font-weight: 600; color: #374151; }
+    td { cursor: pointer; transition: background-color 0.15s ease-in-out; }
+    td:hover { background-color: #f3f4f6; }
+    .month-header { font-weight: 700; font-size: 1.125rem; color: #111827; }
+    .weekend { color: #ef4444; }
+    .holiday { color: #ef4444; background-color: #fee2e2; }
+    .event-badge { display: inline-block; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.75rem; margin-top: 0.25rem; word-break: keep-all; }
+    .event-badge.exam { background-color: #dbeafe; color: #1e40af; }
+    .event-badge.holiday { background-color: #fee2e2; color: #991b1b; }
+    .event-badge.normal { background-color: #d1fae5; color: #065f46; }
+    .summary-th { background-color: #e5e7eb; font-weight: 700; }
+    @media print {
+      body { background-color: white; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+      .table-container { overflow-x: visible; }
+      table { page-break-inside: auto; margin-bottom: 2rem; }
+      tr { page-break-inside: avoid; page-break-after: auto; }
+      th, td { border: 1px solid #9ca3af; padding: 0.25rem; font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    const initialHolidays = {
+      '2027-01-01': '신정', '2027-02-06': '설날 연휴', '2027-02-07': '설날', '2027-02-08': '설날 연휴', '2027-02-09': '대체공휴일(설날)',
+      '2027-03-01': '3.1절 휴일', '2027-05-05': '어린이날', '2027-05-13': '부처님오신날', '2027-06-06': '현충일', '2027-06-07': '대체공휴일(현충일)',
+      '2027-08-15': '광복절', '2027-08-16': '대체공휴일(광복절)', '2027-09-14': '추석 연휴', '2027-09-15': '추석', '2027-09-16': '추석 연휴',
+      '2027-10-03': '개천절', '2027-10-04': '대체공휴일(개천절)', '2027-10-09': '한글날', '2027-10-11': '대체공휴일(한글날)', '2027-12-25': '기독탄신일(크리스마스)'
+    };
+
+    const generateCalendarDates = (startDate, endDate) => {
+      const dates = [];
+      let currentDate = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(currentDate.getTime()) || isNaN(end.getTime()) || currentDate > end) return [];
+
+      while (currentDate <= end) {
+        if (currentDate.getDay() >= 1 && currentDate.getDay() <= 5) {
+          dates.push(new Date(currentDate));
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      return dates;
+    };
+
+    const formatDate = (date) => {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+
+    const getWeekNumber = (date) => {
+      const startOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+      const firstMonday = startOfMonth.getDay() === 1 ? startOfMonth : new Date(date.getFullYear(), date.getMonth(), 1 + (8 - startOfMonth.getDay()) % 7);
+      if (date < firstMonday) return 1;
+      return Math.ceil(((date - firstMonday) / 86400000 + 1) / 7) + (startOfMonth.getDay() === 1 ? 0 : 1);
+    };
+
+    const SemesterTable = ({ semester, title, startDate, endDate, events, setEvents, onDateClick, onTotalsChange }) => {
+      const dates = useMemo(() => generateCalendarDates(startDate, endDate), [startDate, endDate]);
+      
+      const weeks = useMemo(() => {
+        const weeksData = [];
+        let currentWeek = null;
+        
+        dates.forEach(date => {
+          const month = date.getMonth() + 1;
+          const weekNum = getWeekNumber(date);
+          const dateStr = formatDate(date);
+          
+          if (!currentWeek || currentWeek.month !== month || currentWeek.weekNum !== weekNum) {
+            if (currentWeek) weeksData.push(currentWeek);
+            currentWeek = {
+              month,
+              weekNum,
+              days: { 1: null, 2: null, 3: null, 4: null, 5: null }
+            };
+          }
+          
+          currentWeek.days[date.getDay()] = {
+            date,
+            dateStr,
+            events: events[dateStr] || []
+          };
+        });
+        if (currentWeek) weeksData.push(currentWeek);
+        return weeksData;
+      }, [dates, events]);
+
+      useEffect(() => {
+        const totals = { 1: 0, 2: 0, 3: 0 };
+        weeks.forEach(week => {
+          [1, 2, 3, 4, 5].forEach(dayIdx => {
+            const day = week.days[dayIdx];
+            if (day) {
+              const isHoliday = day.events.some(e => e.type === 'holiday');
+              [1, 2, 3].forEach(grade => {
+                const noSchool = isHoliday || day.events.some(e => e.noSchoolGrades?.includes(grade));
+                if (!noSchool) totals[grade]++;
+              });
+            }
+          });
+        });
+        onTotalsChange(semester, totals);
+      }, [weeks, semester, onTotalsChange]);
+
+      if (dates.length === 0) return null;
+
+      return (
+        <div className="mb-12 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+            <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+          </div>
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th rowSpan="2" className="w-12">월</th>
+                  <th rowSpan="2" className="w-12">주</th>
+                  <th rowSpan="2" className="w-24">요일<br/>기간</th>
+                  <th rowSpan="2" className="w-32">월</th>
+                  <th rowSpan="2" className="w-32">화</th>
+                  <th rowSpan="2" className="w-32">수</th>
+                  <th rowSpan="2" className="w-32">목</th>
+                  <th rowSpan="2" className="w-32">금</th>
+                  <th colSpan="3">수업일수</th>
+                </tr>
+                <tr>
+                  <th className="w-12">1년</th>
+                  <th className="w-12">2년</th>
+                  <th className="w-12">3년</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weeks.map((week, idx) => {
+                  const showMonth = idx === 0 || weeks[idx - 1].month !== week.month;
+                  const rowspan = weeks.filter(w => w.month === week.month).length;
+                  
+                  // Calculate days
+                  let schoolDays = { 1: 0, 2: 0, 3: 0 };
+                  [1, 2, 3, 4, 5].forEach(dayIdx => {
+                    const day = week.days[dayIdx];
+                    if (day) {
+                      const isHoliday = day.events.some(e => e.type === 'holiday');
+                      [1, 2, 3].forEach(grade => {
+                        const noSchool = isHoliday || day.events.some(e => e.noSchoolGrades?.includes(grade));
+                        if (!noSchool) schoolDays[grade]++;
+                      });
+                    }
+                  });
+
+                  // Date range for '기간'
+                  const validDays = Object.values(week.days).filter(Boolean);
+                  const startD = validDays[0]?.date.getDate();
+                  const endD = validDays[validDays.length - 1]?.date.getDate();
+                  const period = startD === endD ? `${startD}` : `${startD}~${endD}`;
+
+                  return (
+                    <tr key={`${week.month}-${week.weekNum}`}>
+                      {showMonth && <td rowSpan={rowspan} className="month-header">{week.month}</td>}
+                      <td>{week.weekNum}</td>
+                      <td>{period}</td>
+                      {[1, 2, 3, 4, 5].map(dayIdx => {
+                        const day = week.days[dayIdx];
+                        if (!day) return <td key={dayIdx} className="bg-gray-50"></td>;
+                        const isHoliday = day.events.some(e => e.type === 'holiday');
+                        return (
+                          <td key={dayIdx} 
+                              className={isHoliday ? 'holiday' : ''}
+                              onClick={() => onDateClick(day.dateStr, day.date.getDate())}>
+                            <div className="font-semibold text-gray-500 mb-1 text-sm">{day.date.getDate()}</div>
+                            <div className="flex flex-col gap-1">
+                              {day.events.map((e, i) => (
+                                <span key={i} className={`event-badge ${e.type}`}>
+                                  {e.name}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="font-semibold text-gray-600">{schoolDays[1]}</td>
+                      <td className="font-semibold text-gray-600">{schoolDays[2]}</td>
+                      <td className="font-semibold text-gray-600">{schoolDays[3]}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      const defaultEvents = () => {
+        const initial = {};
+        Object.entries(initialHolidays).forEach(([date, name]) => {
+          initial[date] = [{ name: name, type: 'holiday', noSchoolGrades: [1,2,3] }];
+        });
+        return initial;
+      };
+
+      const [events, setEvents] = useState(defaultEvents());
+      const [selectedDate, setSelectedDate] = useState(null);
+      const [showModal, setShowModal] = useState(false);
+      
+      const [eventName, setEventName] = useState('');
+      const [eventType, setEventType] = useState('normal'); 
+      const [eventGrades, setEventGrades] = useState([]); // Default to unchecked
+
+      // State for UI Toggles
+      const [showCloudSettings, setShowCloudSettings] = useState(false);
+
+      // State for Semester Dates
+      const [s1Start, setS1Start] = useState('2027-03-02');
+      const [s1End, setS1End] = useState('2027-07-21');
+      const [s2Start, setS2Start] = useState('2027-08-16');
+      const [s2End, setS2End] = useState('2027-12-31');
+      
+      const [s1TargetDays, setS1TargetDays] = useState('');
+      const [s2TargetDays, setS2TargetDays] = useState('');
+
+      // State for Cloud Sync (Firebase)
+      const defaultFirebaseConfig = `{
+  "apiKey": "AIzaSyCz9jRBjxNjPVA1Az9YAPRu9Jk7A1bgeqI",
+  "authDomain": "school-calendar-79059.firebaseapp.com",
+  "databaseURL": "https://school-calendar-79059-default-rtdb.firebaseio.com",
+  "projectId": "school-calendar-79059",
+  "storageBucket": "school-calendar-79059.firebasestorage.app",
+  "messagingSenderId": "984987838782",
+  "appId": "1:984987838782:web:9fb74f68db0338c6c7a46f"
+}`;
+      const [firebaseConfigStr, setFirebaseConfigStr] = useState(() => localStorage.getItem('firebaseConfig') || defaultFirebaseConfig);
+      const [isFirebaseConnected, setIsFirebaseConnected] = useState(false);
+      const [isLoading, setIsLoading] = useState(false);
+      const [isSaving, setIsSaving] = useState(false);
+      
+      // State for Totals
+      const [totals, setTotals] = useState({
+        1: { 1: 0, 2: 0, 3: 0 },
+        2: { 1: 0, 2: 0, 3: 0 }
+      });
+
+      const getFirebaseApp = (configStr) => {
+        try {
+          // Replace simple keys without quotes to valid JSON if user pasted raw JS object
+          let validJsonStr = configStr.replace(/([{,]\s*)([a-zA-Z0-9_]+)(\s*:)/g, '$1"$2"$3');
+          // Fix single quotes to double quotes for JSON parsing
+          validJsonStr = validJsonStr.replace(/'/g, '"');
+          const config = JSON.parse(validJsonStr);
+          if (!firebase.apps.length) {
+            return firebase.initializeApp(config);
+          }
+          return firebase.app();
+        } catch (e) {
+          return null;
+        }
+      };
+
+      const connectFirebase = (configStr) => {
+        if (!configStr) return;
+        const app = getFirebaseApp(configStr);
+        if (!app) {
+          alert('올바른 JSON 형식이 아닙니다. { } 안의 내용을 정확히 복사해주세요.');
+          return;
+        }
+        
+        setIsLoading(true);
+        try {
+          localStorage.setItem('firebaseConfig', configStr);
+          const dbRef = firebase.database().ref('calendar');
+          
+          // Listen for real-time changes
+          dbRef.on('value', (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+              if (data.events) setEvents(data.events);
+              if (data.s1Start) setS1Start(data.s1Start);
+              if (data.s1End) setS1End(data.s1End);
+              if (data.s2Start) setS2Start(data.s2Start);
+              if (data.s2End) setS2End(data.s2End);
+            }
+            setIsLoading(false);
+            setIsFirebaseConnected(true);
+          });
+        } catch (e) {
+          alert('Firebase 연결 중 오류: ' + e.message);
+          setIsLoading(false);
+        }
+      };
+
+      const saveToCloud = () => {
+        if (!isFirebaseConnected) {
+          alert('먼저 하단의 설정창에서 파이어베이스를 연동해주세요.');
+          return;
+        }
+        setIsSaving(true);
+        const payload = { events, s1Start, s1End, s2Start, s2End };
+        firebase.database().ref('calendar').set(payload)
+          .then(() => {
+            alert('실시간 서버에 반영되었습니다!\n다른 선생님들의 달력도 새로고침 없이 즉시 바뀝니다.');
+            setIsSaving(false);
+          })
+          .catch((e) => {
+            alert('저장 실패: ' + e.message);
+            setIsSaving(false);
+          });
+      };
+
+      useEffect(() => {
+        if (firebaseConfigStr) {
+          connectFirebase(firebaseConfigStr);
+        }
+      }, []);
+
+      const openModal = (dateStr, dayNum) => {
+        setSelectedDate(dateStr);
+        setShowModal(true);
+      };
+
+      const handleAddEvent = (e) => {
+        e.preventDefault();
+        if (!eventName.trim()) return;
+        
+        const newEvent = {
+          name: eventName,
+          type: eventType,
+          noSchoolGrades: eventGrades
+        };
+        
+        setEvents(prev => ({
+          ...prev,
+          [selectedDate]: [...(prev[selectedDate] || []), newEvent]
+        }));
+        
+        setEventName('');
+        setEventType('normal');
+        setEventGrades([]);
+        setShowModal(false);
+      };
+
+      const handleGradeToggle = (grade) => {
+        setEventGrades(prev => 
+          prev.includes(grade) ? prev.filter(g => g !== grade) : [...prev, grade]
+        );
+      };
+
+      const handleEventTypeChange = (type) => {
+        setEventType(type);
+        if (type === 'holiday') {
+          setEventGrades([1, 2, 3]);
+        } else {
+          setEventGrades([]);
+        }
+      };
+
+      const removeEvent = (dateStr, idx) => {
+        setEvents(prev => {
+          const newEvents = [...prev[dateStr]];
+          newEvents.splice(idx, 1);
+          return { ...prev, [dateStr]: newEvents };
+        });
+      };
+
+      const handleTotalsChange = React.useCallback((semester, newTotals) => {
+        setTotals(prev => ({
+          ...prev,
+          [semester]: newTotals
+        }));
+      }, []);
+
+      const applyAutoEnd = (semester) => {
+        const startStr = semester === 1 ? s1Start : s2Start;
+        const targetDays = parseInt(semester === 1 ? s1TargetDays : s2TargetDays);
+        if (!startStr || isNaN(targetDays) || targetDays <= 0) return;
+        
+        let currentDate = new Date(startStr);
+        let count = 0;
+        let safeLoop = 0;
+        
+        while (count < targetDays && safeLoop < 400) {
+          safeLoop++;
+          const dayOfWeek = currentDate.getDay();
+          const dateStr = formatDate(currentDate);
+          
+          if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+            const dayEvents = events[dateStr] || [];
+            const isHoliday = dayEvents.some(e => e.type === 'holiday');
+            if (!isHoliday) {
+              count++;
+            }
+          }
+          if (count < targetDays) {
+            currentDate.setDate(currentDate.getDate() + 1);
+          }
+        }
+        
+        const newEndStr = formatDate(currentDate);
+        if (semester === 1) setS1End(newEndStr);
+        else setS2End(newEndStr);
+      };
+
+      return (
+        <div className="min-h-screen p-6 max-w-7xl mx-auto">
+          <header className="mb-6 flex flex-wrap justify-between items-end no-print gap-4">
+            <div>
+              <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight flex items-center gap-3">
+                2027학년도 연간 학사일정 관리
+                {isLoading && <span className="text-sm font-medium text-indigo-500 bg-indigo-50 px-2 py-1 rounded-md animate-pulse">동기화 중...</span>}
+              </h1>
+              <p className="text-gray-500 mt-2">표를 클릭하여 일정을 추가하거나 수정하세요. 수업일수는 자동으로 계산됩니다.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => window.print()} className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg shadow-sm transition-colors duration-200 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                인쇄 및 PDF 저장
+              </button>
+              <button onClick={saveToCloud} disabled={isSaving || (firebaseConfigStr && !isFirebaseConnected)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2">
+                {isSaving ? (
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                )}
+                실시간 서버에 반영하기
+              </button>
+            </div>
+          </header>
+
+          <div className="mb-8 p-4 bg-white rounded-xl shadow-sm border border-gray-200 no-print">
+            <div className="flex flex-col xl:flex-row gap-6 mb-6">
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-800 mb-3 border-b pb-2">1학기 기간 설정</h3>
+                <div className="flex flex-wrap gap-3 items-center">
+                  <input type="date" value={s1Start} onChange={e => setS1Start(e.target.value)} className="text-lg font-bold text-gray-800 px-3 py-2 border border-gray-300 rounded-md w-44 focus:ring-2 focus:ring-indigo-500" />
+                  <span className="text-gray-500 font-black text-xl">~</span>
+                  <input type="date" value={s1End} onChange={e => setS1End(e.target.value)} className="text-lg font-bold text-gray-800 px-3 py-2 border border-gray-300 rounded-md w-44 focus:ring-2 focus:ring-indigo-500" />
+                  
+                  <div className="flex items-center lg:ml-2 lg:pl-4 lg:border-l border-gray-200">
+                    <input type="number" min="1" value={s1TargetDays} onChange={e => setS1TargetDays(e.target.value)} onKeyDown={e => e.key === 'Enter' && applyAutoEnd(1)} placeholder="목표 일수" className="w-24 px-3 py-2 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                    <button onClick={() => applyAutoEnd(1)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-l-0 border-indigo-200 hover:bg-indigo-100 text-sm font-bold rounded-r-md transition-colors whitespace-nowrap">
+                      계산
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-800 mb-3 border-b pb-2">2학기 기간 설정</h3>
+                <div className="flex flex-wrap gap-3 items-center">
+                  <input type="date" value={s2Start} onChange={e => setS2Start(e.target.value)} className="text-lg font-bold text-gray-800 px-3 py-2 border border-gray-300 rounded-md w-44 focus:ring-2 focus:ring-indigo-500" />
+                  <span className="text-gray-500 font-black text-xl">~</span>
+                  <input type="date" value={s2End} onChange={e => setS2End(e.target.value)} className="text-lg font-bold text-gray-800 px-3 py-2 border border-gray-300 rounded-md w-44 focus:ring-2 focus:ring-indigo-500" />
+                  
+                  <div className="flex items-center lg:ml-2 lg:pl-4 lg:border-l border-gray-200">
+                    <input type="number" min="1" value={s2TargetDays} onChange={e => setS2TargetDays(e.target.value)} onKeyDown={e => e.key === 'Enter' && applyAutoEnd(2)} placeholder="목표 일수" className="w-24 px-3 py-2 border border-gray-300 rounded-l-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                    <button onClick={() => applyAutoEnd(2)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-l-0 border-indigo-200 hover:bg-indigo-100 text-sm font-bold rounded-r-md transition-colors whitespace-nowrap">
+                      계산
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <h3 className="font-bold text-gray-800 mb-3 text-sm flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                수업일수 요약
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
+                  <div className="text-sm font-semibold text-gray-600 mb-1">1학년</div>
+                  <div className="text-2xl font-black text-indigo-600">
+                    {totals[1][1] + totals[2][1]}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][1]}일 + 2학기 {totals[2][1]}일</div>
+                </div>
+                <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
+                  <div className="text-sm font-semibold text-gray-600 mb-1">2학년</div>
+                  <div className="text-2xl font-black text-indigo-600">
+                    {totals[1][2] + totals[2][2]}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][2]}일 + 2학기 {totals[2][2]}일</div>
+                </div>
+                <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
+                  <div className="text-sm font-semibold text-gray-600 mb-1">3학년</div>
+                  <div className="text-2xl font-black text-indigo-600">
+                    {totals[1][3] + totals[2][3]}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][3]}일 + 2학기 {totals[2][3]}일</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <SemesterTable 
+            title={`1학기 (${s1Start} ~ ${s1End})`}
+            semester={1}
+            startDate={s1Start}
+            endDate={s1End}
+            events={events}
+            setEvents={setEvents}
+            onDateClick={openModal}
+            onTotalsChange={handleTotalsChange}
+          />
+
+          <SemesterTable 
+            title={`2학기 (${s2Start} ~ ${s2End})`}
+            semester={2}
+            startDate={s2Start}
+            endDate={s2End}
+            events={events}
+            setEvents={setEvents}
+            onDateClick={openModal}
+            onTotalsChange={handleTotalsChange}
+          />
+          
+          <div className="mt-12 mb-8 text-center no-print">
+            <button 
+              onClick={() => setShowCloudSettings(!showCloudSettings)} 
+              className="text-sm text-gray-500 hover:text-gray-800 underline bg-transparent border-none cursor-pointer flex items-center justify-center mx-auto gap-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.2 15c.7-1.2 1-2.5.7-3.9-.6-2-2.4-3.5-4.4-3.5h-1.2c-.7-3-3.2-5.2-6.2-5.6-3-.3-5.9 1.3-7.3 4-1.2 2.5-1 6.5.5 8.8m8.7-1.6V21"/><path d="M16 16l-4-4-4 4"/></svg>
+              {showCloudSettings ? '파이어베이스 연동 설정 닫기' : '파이어베이스 연동 설정 열기 (실시간 동기화)'}
+            </button>
+            
+            {showCloudSettings && (
+              <div className="mt-4 p-5 bg-blue-50 rounded-xl shadow-inner border border-blue-100 max-w-3xl mx-auto text-left">
+                <div className="flex flex-col gap-3">
+                  <div className="w-full">
+                    <label className="block text-sm font-bold text-blue-900 mb-1">파이어베이스 설정값 (firebaseConfig)</label>
+                    <textarea 
+                      value={firebaseConfigStr} 
+                      onChange={e => setFirebaseConfigStr(e.target.value)} 
+                      placeholder='{&#10;  apiKey: "...",&#10;  authDomain: "...",&#10;  databaseURL: "...",&#10;  ...&#10;}' 
+                      className="w-full px-3 py-2.5 border border-blue-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xs h-32"
+                    ></textarea>
+                    <p className="text-xs text-blue-700 mt-1">파이어베이스 콘솔에서 발급받은 중괄호 &#123; &#125; 영역의 코드를 복사해서 붙여넣으세요.</p>
+                  </div>
+                  <div className="flex gap-3 mt-1">
+                    <button onClick={() => connectFirebase(firebaseConfigStr)} className="flex-1 px-4 py-2 bg-white text-blue-700 border border-blue-300 font-bold rounded-lg hover:bg-blue-50 shadow-sm transition-colors flex items-center justify-center gap-2">
+                      <span className={`w-3 h-3 rounded-full ${isFirebaseConnected ? 'bg-green-500' : 'bg-gray-300'}`}></span>
+                      {isFirebaseConnected ? '실시간 연동 중 (다시 연결)' : '실시간 동기화 시작하기'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {showModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 no-print">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                  <h3 className="text-lg font-bold text-gray-800">{selectedDate} 일정 관리</h3>
+                  <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </button>
+                </div>
+                
+                <div className="p-6">
+                  {events[selectedDate]?.length > 0 && (
+                    <div className="mb-6">
+                      <h4 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider">등록된 일정</h4>
+                      <div className="space-y-2">
+                        {events[selectedDate].map((e, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${e.type === 'holiday' ? 'bg-red-500' : e.type === 'exam' ? 'bg-blue-500' : 'bg-green-500'}`}></span>
+                              <span className="font-medium text-gray-700">{e.name}</span>
+                            </div>
+                            <button onClick={() => removeEvent(selectedDate, idx)} className="text-red-500 hover:text-red-700 text-sm font-medium">삭제</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleAddEvent}>
+                    <h4 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider">새 일정 추가</h4>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">일정 이름</label>
+                        <input type="text" value={eventName} onChange={e => setEventName(e.target.value)} required placeholder="예: 1회 지필평가" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">구분</label>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="type" value="normal" checked={eventType === 'normal'} onChange={() => handleEventTypeChange('normal')} className="text-indigo-600 focus:ring-indigo-500" />
+                            <span>일반 행사</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="type" value="exam" checked={eventType === 'exam'} onChange={() => handleEventTypeChange('exam')} className="text-indigo-600 focus:ring-indigo-500" />
+                            <span>시험/평가</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="type" value="holiday" checked={eventType === 'holiday'} onChange={() => handleEventTypeChange('holiday')} className="text-indigo-600 focus:ring-indigo-500" />
+                            <span>공휴일/휴업일</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">수업일수 차감 학년 (휴업 대상)</label>
+                        <div className="flex gap-4 bg-gray-50 p-2 rounded-lg border border-gray-200">
+                          {[1, 2, 3].map(grade => (
+                            <label key={grade} className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" checked={eventGrades.includes(grade)} onChange={() => handleGradeToggle(grade)} className="text-indigo-600 focus:ring-indigo-500 rounded border-gray-300" />
+                              <span className="text-sm text-gray-700">{grade}학년</span>
+                            </label>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">선택된 학년은 해당 일자에 수업일수가 합산되지 않습니다.</p>
+                      </div>
+                      <button type="submit" className="w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-lg transition-colors mt-2">
+                        추가하기
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
