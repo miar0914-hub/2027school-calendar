@@ -197,7 +197,9 @@
                         <td rowSpan={rowspan} className="month-header bg-white">
                           <div className="flex flex-col items-center justify-center">
                             <span>{week.month}</span>
-                            <span className="text-xs font-semibold text-indigo-600 mt-1 bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">{monthTotals[week.month][1]}일</span>
+                            {semester !== 'vacation' && (
+                              <span className="text-xs font-semibold text-indigo-600 mt-1 bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-100">{monthTotals[week.month][1]}일</span>
+                            )}
                           </div>
                         </td>
                       )}
@@ -218,7 +220,7 @@
                                   {e.name}
                                 </span>
                               ))}
-                              {day.dateStr === endDate && !day.events.some(e => e.name.includes('방학식')) && (
+                              {day.dateStr === endDate && !day.events.some(e => e.name.includes('방학식')) && (semester === 1 || semester === 2) && (
                                 <span className="event-badge normal bg-indigo-100 text-indigo-800 border border-indigo-200">
                                   {semester === 1 ? '여름방학식' : '겨울방학식'}
                                 </span>
@@ -227,9 +229,9 @@
                           </td>
                         );
                       })}
-                      <td className="font-semibold text-gray-600">{schoolDays[1]}</td>
-                      <td className="font-semibold text-gray-600">{schoolDays[2]}</td>
-                      <td className="font-semibold text-gray-600">{schoolDays[3]}</td>
+                      <td className="font-semibold text-gray-600">{semester === 'vacation' ? '-' : schoolDays[1]}</td>
+                      <td className="font-semibold text-gray-600">{semester === 'vacation' ? '-' : schoolDays[2]}</td>
+                      <td className="font-semibold text-gray-600">{semester === 'vacation' ? '-' : schoolDays[3]}</td>
                     </tr>
                   );
                 })}
@@ -554,6 +556,14 @@
         setS2TargetDays(countSchoolDays(s2Start, val, events));
       };
 
+      const vacStartD = new Date(s1End);
+      vacStartD.setDate(vacStartD.getDate() + 1);
+      const vacEndD = new Date(s2Start);
+      vacEndD.setDate(vacEndD.getDate() - 1);
+      const showVacation = vacStartD <= vacEndD;
+      const vacStartStr = showVacation ? formatDate(vacStartD) : '';
+      const vacEndStr = showVacation ? formatDate(vacEndD) : '';
+
       return (
         <div className="min-h-screen p-6 max-w-7xl mx-auto">
           <header className="mb-6 flex flex-wrap justify-between items-end no-print gap-4">
@@ -676,6 +686,19 @@
             onDateClick={openModal}
             onTotalsChange={handleTotalsChange}
           />
+
+          {showVacation && (
+            <SemesterTable 
+              title={`여름방학 (${vacStartStr} ~ ${vacEndStr})`}
+              semester={'vacation'}
+              startDate={vacStartStr}
+              endDate={vacEndStr}
+              events={events}
+              setEvents={setEvents}
+              onDateClick={openModal}
+              onTotalsChange={() => {}}
+            />
+          )}
 
           <SemesterTable 
             title={`2학기 (${s2Start} ~ ${s2End})`}
