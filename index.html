@@ -277,11 +277,13 @@
         }
       };
 
+      const [lastSavedState, setLastSavedState] = useState('');
+      
       const connectFirebase = (configStr) => {
         if (!configStr) return;
         const app = getFirebaseApp(configStr);
         if (!app) {
-          alert('올바른 JSON 형식이 아닙니다. { } 안의 내용을 정확히 복사해주세요.');
+          alert('올바른 JSON 형식이 아닙니다.');
           return;
         }
         
@@ -294,6 +296,7 @@
           dbRef.on('value', (snapshot) => {
             const data = snapshot.val();
             if (data) {
+              setLastSavedState(JSON.stringify(data));
               if (data.events) setEvents(data.events);
               if (data.s1Start) setS1Start(data.s1Start);
               if (data.s1End) setS1End(data.s1End);
@@ -309,23 +312,25 @@
         }
       };
 
-      const saveToCloud = () => {
-        if (!isFirebaseConnected) {
-          alert('먼저 하단의 설정창에서 파이어베이스를 연동해주세요.');
-          return;
-        }
-        setIsSaving(true);
+      // Auto-save Effect
+      useEffect(() => {
+        if (!isFirebaseConnected) return;
         const payload = { events, s1Start, s1End, s2Start, s2End };
-        firebase.database().ref('calendar').set(payload)
-          .then(() => {
-            alert('실시간 서버에 반영되었습니다!\n다른 선생님들의 달력도 새로고침 없이 즉시 바뀝니다.');
-            setIsSaving(false);
-          })
-          .catch((e) => {
-            alert('저장 실패: ' + e.message);
-            setIsSaving(false);
-          });
-      };
+        const payloadStr = JSON.stringify(payload);
+        
+        if (payloadStr !== lastSavedState) {
+          setIsSaving(true);
+          firebase.database().ref('calendar').set(payload)
+            .then(() => {
+              setLastSavedState(payloadStr);
+              setIsSaving(false);
+            })
+            .catch((e) => {
+              console.error('Auto-save failed:', e);
+              setIsSaving(false);
+            });
+        }
+      }, [events, s1Start, s1End, s2Start, s2End, isFirebaseConnected, lastSavedState]);
 
       useEffect(() => {
         if (firebaseConfigStr) {
@@ -455,14 +460,18 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                 인쇄 및 PDF 저장
               </button>
-              <button onClick={saveToCloud} disabled={isSaving || (firebaseConfigStr && !isFirebaseConnected)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2">
-                {isSaving ? (
-                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-                )}
-                실시간 서버에 반영하기
-              </button>
+              {isSaving && (
+                <div className="px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg border border-blue-100 flex items-center gap-2">
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  자동 저장 중...
+                </div>
+              )}
+              {isFirebaseConnected && !isSaving && (
+                <div className="px-4 py-2 bg-green-50 text-green-600 font-medium rounded-lg border border-green-100 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  모든 변경사항 저장됨
+                </div>
+              )}
             </div>
           </header>
 
