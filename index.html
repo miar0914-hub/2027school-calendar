@@ -74,7 +74,7 @@
       return Math.ceil(((date - firstMonday) / 86400000 + 1) / 7) + (startOfMonth.getDay() === 1 ? 0 : 1);
     };
 
-    const SemesterTable = ({ semester, title, startDate, endDate, events, setEvents, onDateClick, onTotalsChange }) => {
+    const SemesterTable = ({ semester, title, startDate, endDate, events, setEvents, onDateClick, onTotalsChange, viewMode = 'edit', annualTotals = null, vacationInfo = null }) => {
       const dates = useMemo(() => generateCalendarDates(startDate, endDate), [startDate, endDate]);
       
       const weeks = useMemo(() => {
@@ -143,12 +143,18 @@
       if (dates.length === 0) return null;
 
       return (
-        <div className="mb-12 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-gray-800">{title}</h2>
-          </div>
+        <div className={`mb-12 bg-white ${viewMode === 'edit' ? 'rounded-xl shadow-sm border border-gray-200' : ''} overflow-hidden`}>
+          {viewMode === 'edit' ? (
+            <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+            </div>
+          ) : (
+            <div className="mb-2 flex justify-center">
+              <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+            </div>
+          )}
           <div className="table-container">
-            <table>
+            <table className={viewMode === 'viewer' ? 'border-2 border-gray-800' : ''}>
               <thead>
                 <tr>
                   <th rowSpan="2" className="w-12">월</th>
@@ -211,8 +217,8 @@
                         const isHoliday = day.events.some(e => e.type === 'holiday');
                         return (
                           <td key={dayIdx} 
-                              className={isHoliday ? 'holiday' : ''}
-                              onClick={() => onDateClick(day.dateStr, day.date.getDate())}>
+                              className={`${isHoliday ? 'holiday' : ''} ${viewMode === 'edit' ? 'cursor-pointer hover:bg-indigo-50 transition-colors' : ''}`}
+                              onClick={() => viewMode === 'edit' && onDateClick(day.dateStr, day.date.getDate())}>
                             <div className="font-semibold text-gray-500 mb-1 text-sm">{day.date.getDate()}</div>
                             <div className="flex flex-col gap-1">
                               {day.events.map((e, i) => (
@@ -235,6 +241,124 @@
                     </tr>
                   );
                 })}
+                {viewMode === 'viewer' && semester !== 'vacation' && (
+                  (() => {
+                    const distinctMonths = [...new Set(dates.map(d => d.getMonth() + 1))].slice(0, 5);
+                    const summary = {
+                      1: { school: {}, event: {} },
+                      2: { school: {}, event: {} },
+                      3: { school: {}, event: {} }
+                    };
+                    distinctMonths.forEach(m => {
+                      [1, 2, 3].forEach(g => {
+                        summary[g].school[m] = 0;
+                        summary[g].event[m] = 0;
+                      });
+                    });
+
+                    weeks.forEach(week => {
+                      [1, 2, 3, 4, 5].forEach(dayIdx => {
+                        const day = week.days[dayIdx];
+                        if (day) {
+                          const m = day.date.getMonth() + 1;
+                          if (!distinctMonths.includes(m)) return;
+                          const isHoliday = day.events.some(e => e.type === 'holiday');
+                          [1, 2, 3].forEach(grade => {
+                            const noSchool = isHoliday || day.events.some(e => e.noSchoolGrades?.includes(grade));
+                            if (!noSchool) {
+                              summary[grade].school[m]++;
+                              const hasDynamicEnd = (day.dateStr === endDate && !day.events.some(e => e.name.includes('방학식')) && (semester === 1 || semester === 2));
+                              if (day.events.some(e => e.type !== 'holiday') || hasDynamicEnd) {
+                                summary[grade].event[m]++;
+                              }
+                            }
+                          });
+                        }
+                      });
+                    });
+
+                    const categories = [
+                      { key: 'event', label: '행사일수' },
+                      { key: 'curr', label: '교과활동\n수업일수' },
+                      { key: 'school', label: '수업일수\n(출석일수)' }
+                    ];
+
+                    return (
+                      <React.Fragment>
+                        {categories.map((cat, catIdx) => (
+                          <React.Fragment key={cat.key}>
+                            {[1, 2, 3].map((grade, gIdx) => {
+                              let total = 0;
+                              const cells = [0, 1, 2, 3, 4].map(i => {
+                                const m = distinctMonths[i];
+                                if (!m) return <td key={i} className="text-center font-medium bg-white"></td>;
+                                
+                                let val = 0;
+                                if (cat.key === 'event') val = summary[grade].event[m];
+                                else if (cat.key === 'school') val = summary[grade].school[m];
+                                else if (cat.key === 'curr') val = summary[grade].school[m] - summary[grade].event[m];
+                                
+                                total += val;
+                                const color = cat.key === 'event' ? 'text-gray-800' : 'text-red-600';
+                                return <td key={i} className={`text-center font-medium ${color} bg-white border border-gray-400`}>{val}</td>;
+                              });
+
+                              return (
+                                <tr key={`${cat.key}-${grade}`} className={gIdx === 0 ? "border-t-[3px] border-gray-600" : "border-t border-gray-300"}>
+                                  {gIdx === 0 && (
+                                    <td rowSpan={3} className="font-bold bg-gray-100 text-center whitespace-pre-line border border-gray-400">{cat.label}</td>
+                                  )}
+                                  <td colSpan={2} className="font-bold bg-gray-100 text-center border border-gray-400">{grade}학년</td>
+                                  {cells}
+                                  <td colSpan={3} className={`text-center font-bold bg-gray-100 border border-gray-400 ${cat.key !== 'event' ? 'text-red-600' : 'text-gray-800'}`}>
+                                    {total}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </React.Fragment>
+                        ))}
+                        <tr className="border-t-[3px] border-gray-600">
+                          <td className="font-bold bg-gray-100 text-center border border-gray-400">비고</td>
+                          <td colSpan={10} className="text-left px-4 py-2 bg-white text-gray-700 border border-gray-400">
+                            ※ 
+                          </td>
+                        </tr>
+                        {semester === 2 && annualTotals && vacationInfo && (
+                          <React.Fragment>
+                            <tr className="border-t-[3px] border-gray-800">
+                              <td rowSpan={3} className="font-bold bg-gray-100 text-center whitespace-pre-line leading-snug text-sm border border-gray-400">연간 총<br/>수업일수<br/><span className="text-xs font-normal">(출석일수)</span></td>
+                              <td colSpan={2} className="font-bold bg-gray-100 text-center border border-gray-400">1학년</td>
+                              <td colSpan={1} className="text-center font-bold text-red-600 bg-white border border-gray-400">
+                                {annualTotals[1]}
+                              </td>
+                              <td colSpan={7} rowSpan={3} className="bg-white text-left px-6 py-3 border border-gray-400">
+                                <div className="font-semibold text-gray-800 mb-2">
+                                  ◎ 여 름 방 학 - {vacationInfo.summer}
+                                </div>
+                                <div className="font-semibold text-gray-800">
+                                  ◎ 겨 울 방 학 - {vacationInfo.winter}
+                                </div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan={2} className="font-bold bg-gray-100 text-center border border-gray-400">2학년</td>
+                              <td colSpan={1} className="text-center font-bold text-red-600 bg-white border border-gray-400">
+                                {annualTotals[2]}
+                              </td>
+                            </tr>
+                            <tr>
+                              <td colSpan={2} className="font-bold bg-gray-100 text-center border border-gray-400">3학년</td>
+                              <td colSpan={1} className="text-center font-bold text-red-600 bg-white border border-gray-400">
+                                {annualTotals[3]}
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        )}
+                      </React.Fragment>
+                    );
+                  })()
+                )}
               </tbody>
             </table>
           </div>
@@ -262,6 +386,7 @@
 
       // State for UI Toggles
       const [showCloudSettings, setShowCloudSettings] = useState(false);
+      const [viewMode, setViewMode] = useState('edit');
 
       // State for Semester Dates
       const [s1Start, setS1Start] = useState('2027-03-02');
@@ -563,6 +688,29 @@
       const showVacation = vacStartD <= vacEndD;
       const vacStartStr = showVacation ? formatDate(vacStartD) : '';
       const vacEndStr = showVacation ? formatDate(vacEndD) : '';
+      
+      const formatDateKorean = (dateStr) => {
+        const d = new Date(dateStr);
+        if (isNaN(d)) return '';
+        const days = ['일', '월', '화', '수', '목', '금', '토'];
+        return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}.(${days[d.getDay()]})`;
+      };
+
+      const winterStartD = new Date(s2End);
+      winterStartD.setDate(winterStartD.getDate() + 1);
+      const winterEndD = new Date(winterStartD.getFullYear(), 2, 0); // Last day of Feb
+      const winterDays = Math.floor((winterEndD - winterStartD) / 86400000) + 1;
+
+      const vacationInfo = {
+        summer: showVacation ? `${formatDateKorean(vacStartStr)} ~ ${formatDateKorean(vacEndStr)} [${summerVacDays}일]` : '',
+        winter: `${formatDateKorean(winterStartD)} ~ ${formatDateKorean(winterEndD)} [${winterDays}일]`
+      };
+
+      const annualTotals = {
+        1: totals[1][1] + totals[2][1],
+        2: totals[1][2] + totals[2][2],
+        3: totals[1][3] + totals[2][3]
+      };
 
       return (
         <div className="min-h-screen p-6 max-w-7xl mx-auto">
@@ -575,6 +723,20 @@
               <p className="text-gray-500 mt-2">표를 클릭하여 일정을 추가하거나 수정하세요. 수업일수는 자동으로 계산됩니다.</p>
             </div>
             <div className="flex gap-2">
+              <div className="bg-gray-100 p-1 rounded-lg flex gap-1 mr-2">
+                <button 
+                  onClick={() => setViewMode('edit')} 
+                  className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${viewMode === 'edit' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  수정 모드
+                </button>
+                <button 
+                  onClick={() => setViewMode('viewer')} 
+                  className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${viewMode === 'viewer' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  뷰어 모드 (인쇄용)
+                </button>
+              </div>
               <button onClick={() => window.print()} className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg shadow-sm transition-colors duration-200 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                 인쇄 및 PDF 저장
@@ -594,11 +756,12 @@
             </div>
           </header>
 
-          <div className="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden no-print">
-            <div className="bg-gray-50 px-5 py-3 border-b border-gray-200">
-              <h3 className="font-bold text-gray-800">학기 기간 및 방학 설정</h3>
-            </div>
-            <div className="p-5 flex flex-col gap-6">
+          {viewMode === 'edit' && (
+            <div className="mb-8 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden no-print">
+              <div className="bg-gray-50 px-5 py-3 border-b border-gray-200">
+                <h3 className="font-bold text-gray-800">학기 기간 및 방학 설정</h3>
+              </div>
+              <div className="p-5 flex flex-col gap-6">
               {/* 1학기 */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                 <div className="font-bold text-gray-800 flex items-center gap-2">
@@ -674,7 +837,8 @@
                 </div>
               </div>
             </div>
-          </div>
+            </div>
+          )}
 
           <SemesterTable 
             title={`1학기 (${s1Start} ~ ${s1End})`}
@@ -685,9 +849,10 @@
             setEvents={setEvents}
             onDateClick={openModal}
             onTotalsChange={handleTotalsChange}
+            viewMode={viewMode}
           />
 
-          {showVacation && (
+          {showVacation && viewMode !== 'viewer' && (
             <SemesterTable 
               title={`여름방학 (${vacStartStr} ~ ${vacEndStr})`}
               semester={'vacation'}
@@ -697,6 +862,7 @@
               setEvents={setEvents}
               onDateClick={openModal}
               onTotalsChange={() => {}}
+              viewMode={viewMode}
             />
           )}
 
@@ -709,6 +875,9 @@
             setEvents={setEvents}
             onDateClick={openModal}
             onTotalsChange={handleTotalsChange}
+            viewMode={viewMode}
+            annualTotals={annualTotals}
+            vacationInfo={vacationInfo}
           />
           
           <div className="mt-12 mb-8 text-center no-print">
