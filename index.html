@@ -243,33 +243,24 @@
                 })}
                 {viewMode === 'viewer' && semester !== 'vacation' && (
                   (() => {
-                    const distinctMonths = [...new Set(dates.map(d => d.getMonth() + 1))].slice(0, 5);
                     const summary = {
-                      1: { school: {}, event: {} },
-                      2: { school: {}, event: {} },
-                      3: { school: {}, event: {} }
+                      1: { school: {1:0,2:0,3:0,4:0,5:0}, event: {1:0,2:0,3:0,4:0,5:0} },
+                      2: { school: {1:0,2:0,3:0,4:0,5:0}, event: {1:0,2:0,3:0,4:0,5:0} },
+                      3: { school: {1:0,2:0,3:0,4:0,5:0}, event: {1:0,2:0,3:0,4:0,5:0} }
                     };
-                    distinctMonths.forEach(m => {
-                      [1, 2, 3].forEach(g => {
-                        summary[g].school[m] = 0;
-                        summary[g].event[m] = 0;
-                      });
-                    });
 
                     weeks.forEach(week => {
                       [1, 2, 3, 4, 5].forEach(dayIdx => {
                         const day = week.days[dayIdx];
                         if (day) {
-                          const m = day.date.getMonth() + 1;
-                          if (!distinctMonths.includes(m)) return;
                           const isHoliday = day.events.some(e => e.type === 'holiday');
                           [1, 2, 3].forEach(grade => {
                             const noSchool = isHoliday || day.events.some(e => e.noSchoolGrades?.includes(grade));
                             if (!noSchool) {
-                              summary[grade].school[m]++;
+                              summary[grade].school[dayIdx]++;
                               const hasDynamicEnd = (day.dateStr === endDate && !day.events.some(e => e.name.includes('방학식')) && (semester === 1 || semester === 2));
                               if (day.events.some(e => e.type !== 'holiday') || hasDynamicEnd) {
-                                summary[grade].event[m]++;
+                                summary[grade].event[dayIdx]++;
                               }
                             }
                           });
@@ -289,18 +280,15 @@
                           <React.Fragment key={cat.key}>
                             {[1, 2, 3].map((grade, gIdx) => {
                               let total = 0;
-                              const cells = [0, 1, 2, 3, 4].map(i => {
-                                const m = distinctMonths[i];
-                                if (!m) return <td key={i} className="text-center font-medium bg-white"></td>;
-                                
+                              const cells = [1, 2, 3, 4, 5].map(dayIdx => {
                                 let val = 0;
-                                if (cat.key === 'event') val = summary[grade].event[m];
-                                else if (cat.key === 'school') val = summary[grade].school[m];
-                                else if (cat.key === 'curr') val = summary[grade].school[m] - summary[grade].event[m];
+                                if (cat.key === 'event') val = summary[grade].event[dayIdx];
+                                else if (cat.key === 'school') val = summary[grade].school[dayIdx];
+                                else if (cat.key === 'curr') val = summary[grade].school[dayIdx] - summary[grade].event[dayIdx];
                                 
                                 total += val;
                                 const color = cat.key === 'event' ? 'text-gray-800' : 'text-red-600';
-                                return <td key={i} className={`text-center font-medium ${color} bg-white border border-gray-400`}>{val}</td>;
+                                return <td key={dayIdx} className={`text-center font-medium ${color} bg-white border border-gray-400`}>{val}</td>;
                               });
 
                               return (
