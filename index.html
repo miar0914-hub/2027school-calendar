@@ -374,7 +374,11 @@
 
       // State for UI Toggles
       const [showCloudSettings, setShowCloudSettings] = useState(false);
-      const [viewMode, setViewMode] = useState('edit');
+      const [viewMode, setViewMode] = useState('viewer');
+
+      const handleEditModeClick = () => {
+        setViewMode('edit');
+      };
 
       // State for Semester Dates
       const [s1Start, setS1Start] = useState('2027-03-02');
@@ -513,29 +517,32 @@
         }
       };
 
-      // Auto-save Effect with Debounce
-      useEffect(() => {
-        if (!isFirebaseConnected) return;
-        const payload = { events, s1Start, s1End, s2Start, s2End, s1TargetDays, s2TargetDays, summerVacDays };
-        const payloadStr = JSON.stringify(payload);
+      // Manual Save Function
+      const handleManualSave = () => {
+        if (!isFirebaseConnected) {
+          alert("클라우드 연동이 되어있지 않습니다.");
+          return;
+        }
         
-        if (payloadStr === lastSavedState) return;
-
-        setIsSaving(true);
-        const timerId = setTimeout(() => {
+        const pwd = window.prompt("수정된 내용을 서버에 반영하려면 비밀번호를 입력하세요.");
+        if (pwd === "고양이") {
+          setIsSaving(true);
+          const payload = { events, s1Start, s1End, s2Start, s2End, s1TargetDays, s2TargetDays, summerVacDays };
           firebase.database().ref('calendar').set(payload)
             .then(() => {
-              setLastSavedState(payloadStr);
+              setLastSavedState(JSON.stringify(payload));
               setIsSaving(false);
+              alert("서버에 성공적으로 저장되었습니다!");
             })
             .catch((e) => {
-              console.error('Auto-save failed:', e);
+              console.error('Save failed:', e);
               setIsSaving(false);
+              alert("저장 중 오류가 발생했습니다: " + e.message);
             });
-        }, 800); // 800ms debounce
-
-        return () => clearTimeout(timerId);
-      }, [events, s1Start, s1End, s2Start, s2End, s1TargetDays, s2TargetDays, summerVacDays, isFirebaseConnected, lastSavedState]);
+        } else if (pwd !== null) {
+          alert("비밀번호가 틀렸습니다.");
+        }
+      };
 
       useEffect(() => {
         if (firebaseConfigStr) {
@@ -711,9 +718,9 @@
               <p className="text-gray-500 mt-2">표를 클릭하여 일정을 추가하거나 수정하세요. 수업일수는 자동으로 계산됩니다.</p>
             </div>
             <div className="flex gap-2">
-              <div className="bg-gray-100 p-1 rounded-lg flex gap-1 mr-2">
+              <div className="bg-gray-100 p-1 rounded-lg flex gap-1">
                 <button 
-                  onClick={() => setViewMode('edit')} 
+                  onClick={handleEditModeClick} 
                   className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${viewMode === 'edit' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   수정 모드
@@ -725,21 +732,44 @@
                   뷰어 모드 (인쇄용)
                 </button>
               </div>
+              {viewMode === 'edit' && isFirebaseConnected && (
+                <button 
+                  onClick={handleManualSave}
+                  disabled={isSaving}
+                  className={`px-4 py-2 font-medium rounded-lg shadow-sm transition-colors duration-200 flex items-center gap-2 ${isSaving ? 'bg-blue-100 text-blue-500' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                >
+                  {isSaving ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      저장 중...
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                      서버에 저장
+                    </>
+                  )}
+                </button>
+              )}
               <button onClick={() => window.print()} className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg shadow-sm transition-colors duration-200 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                 인쇄 및 PDF 저장
               </button>
-              {isSaving && (
-                <div className="px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg border border-blue-100 flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  자동 저장 중...
-                </div>
-              )}
-              {isFirebaseConnected && !isSaving && (
-                <div className="px-4 py-2 bg-green-50 text-green-600 font-medium rounded-lg border border-green-100 flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
-                  모든 변경사항 저장됨
-                </div>
+              <button 
+                onClick={() => setShowCloudSettings(true)}
+                className="p-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-500 rounded-lg shadow-sm transition-colors duration-200"
+                title="클라우드 설정"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              </button>
+              {!isFirebaseConnected && (
+                <button 
+                  onClick={() => setShowCloudSettings(true)}
+                  className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg border border-indigo-200 shadow-sm transition-colors duration-200 flex items-center gap-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                  클라우드 연동하기
+                </button>
               )}
             </div>
           </header>
