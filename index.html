@@ -48,18 +48,20 @@
       '2027-10-03': '개천절', '2027-10-04': '대체공휴일(개천절)', '2027-10-09': '한글날', '2027-10-11': '대체공휴일(한글날)', '2027-12-25': '기독탄신일(크리스마스)'
     };
 
-    const generateCalendarDates = (startDate, endDate) => {
+    const generateCalendarDates = (ranges) => {
       const dates = [];
-      let currentDate = new Date(startDate);
-      const end = new Date(endDate);
-      if (isNaN(currentDate.getTime()) || isNaN(end.getTime()) || currentDate > end) return [];
+      ranges.forEach(range => {
+        let currentDate = new Date(range.start);
+        const end = new Date(range.end);
+        if (isNaN(currentDate.getTime()) || isNaN(end.getTime()) || currentDate > end) return;
 
-      while (currentDate <= end) {
-        if (currentDate.getDay() >= 1 && currentDate.getDay() <= 5) {
-          dates.push(new Date(currentDate));
+        while (currentDate <= end) {
+          if (currentDate.getDay() >= 1 && currentDate.getDay() <= 5) {
+            dates.push(new Date(currentDate));
+          }
+          currentDate.setDate(currentDate.getDate() + 1);
         }
-        currentDate.setDate(currentDate.getDate() + 1);
-      }
+      });
       return dates;
     };
 
@@ -74,8 +76,8 @@
       return Math.ceil(((date - firstMonday) / 86400000 + 1) / 7) + (startOfMonth.getDay() === 1 ? 0 : 1);
     };
 
-    const SemesterTable = ({ semester, title, startDate, endDate, events, setEvents, onDateClick, onTotalsChange, viewMode = 'edit', annualTotals = null, vacationInfo = null }) => {
-      const dates = useMemo(() => generateCalendarDates(startDate, endDate), [startDate, endDate]);
+    const SemesterTable = ({ semester, title, dateRanges, events, setEvents, onDateClick, onTotalsChange, viewMode = 'edit', annualTotals = null, vacationInfo = null }) => {
+      const dates = useMemo(() => generateCalendarDates(dateRanges), [JSON.stringify(dateRanges)]);
       
       const weeks = useMemo(() => {
         const weeksData = [];
@@ -402,6 +404,7 @@
       const [hasFeb, setHasFeb] = useState(false);
       const [febStart, setFebStart] = useState('2028-02-07');
       const [febEnd, setFebEnd] = useState('2028-02-11');
+      const [febTargetDays, setFebTargetDays] = useState(5);
 
       const countSchoolDays = (startStr, endStr, evts) => {
         let count = 0;
@@ -499,6 +502,7 @@
               const s1Target = data.s1TargetDays !== undefined ? data.s1TargetDays : (data.s1Start && data.s1End ? countSchoolDays(data.s1Start, data.s1End, data.events || {}) : 95);
               const s2Target = data.s2TargetDays !== undefined ? data.s2TargetDays : (data.s2Start && data.s2End ? countSchoolDays(data.s2Start, data.s2End, data.events || {}) : 95);
               const vacDays = data.summerVacDays !== undefined ? data.summerVacDays : (data.s1End && data.s2Start ? Math.max(0, Math.floor((new Date(data.s2Start) - new Date(data.s1End)) / 86400000) - 1) : 14);
+              const febTarget = data.febTargetDays !== undefined ? data.febTargetDays : (data.febStart && data.febEnd ? countSchoolDays(data.febStart, data.febEnd, data.events || {}) : 5);
 
               const normalizedPayload = {
                 events: data.events || {},
@@ -511,7 +515,8 @@
                 summerVacDays: vacDays,
                 hasFeb: data.hasFeb || false,
                 febStart: data.febStart || '2028-02-07',
-                febEnd: data.febEnd || '2028-02-11'
+                febEnd: data.febEnd || '2028-02-11',
+                febTargetDays: febTarget
               };
 
               setLastSavedState(JSON.stringify(normalizedPayload));
@@ -527,6 +532,7 @@
               setHasFeb(normalizedPayload.hasFeb);
               setFebStart(normalizedPayload.febStart);
               setFebEnd(normalizedPayload.febEnd);
+              setFebTargetDays(normalizedPayload.febTargetDays);
             }
             setIsLoading(false);
             setIsFirebaseConnected(true);
@@ -547,7 +553,7 @@
         const pwd = window.prompt("수정된 내용을 서버에 반영하려면 비밀번호를 입력하세요.");
         if (pwd === "고양이") {
           setIsSaving(true);
-          const payload = { events, s1Start, s1End, s2Start, s2End, s1TargetDays, s2TargetDays, summerVacDays, hasFeb, febStart, febEnd };
+          const payload = { events, s1Start, s1End, s2Start, s2End, s1TargetDays, s2TargetDays, summerVacDays, hasFeb, febStart, febEnd, febTargetDays };
           firebase.database().ref('calendar').set(payload)
             .then(() => {
               setLastSavedState(JSON.stringify(payload));
@@ -696,6 +702,29 @@
         setS2TargetDays(countSchoolDays(s2Start, val, events));
       };
 
+      const handleFebStartChange = (val) => {
+        setFebStart(val);
+        setFebEnd(calcEnd(val, febTargetDays, events));
+      };
+      const handleFebEndChange = (val) => {
+        setFebEnd(val);
+        setFebTargetDays(countSchoolDays(febStart, val, events));
+      };
+      const handleFebTargetChange = (val) => {
+        setFebTargetDays(val);
+        setFebEnd(calcEnd(febStart, val, events));
+      };
+
+      const handleSummerVacChange = (val) => {
+        setSummerVacDays(val);
+        const vac = parseInt(val);
+        if (isNaN(vac)) return;
+        let d = new Date(s1End);
+        d.setDate(d.getDate() + 1 + vac);
+        setS2Start(formatDate(d));
+        setS2End(calcEnd(formatDate(d), s2TargetDays, events));
+      };
+
       const vacStartD = new Date(s1End);
       vacStartD.setDate(vacStartD.getDate() + 1);
       const vacEndD = new Date(s2Start);
@@ -736,10 +765,14 @@
         spring: springVacInfo
       };
 
+      const getFebTotal = (grade) => {
+        return (viewMode === 'edit' && hasFeb) ? totals['feb'][grade] : 0;
+      };
+
       const annualTotals = {
-        1: totals[1][1] + totals[2][1] + totals['feb'][1],
-        2: totals[1][2] + totals[2][2] + totals['feb'][2],
-        3: totals[1][3] + totals[2][3] + totals['feb'][3]
+        1: totals[1][1] + totals[2][1] + getFebTotal(1),
+        2: totals[1][2] + totals[2][2] + getFebTotal(2),
+        3: totals[1][3] + totals[2][3] + getFebTotal(3)
       };
 
       return (
@@ -878,9 +911,12 @@
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
-                      <input type="date" value={febStart} onChange={e => setFebStart(e.target.value)} className="font-bold text-gray-800 px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
+                      <input type="date" value={febStart} onChange={e => handleFebStartChange(e.target.value)} className="font-bold text-gray-800 px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
                       <span className="text-gray-400 font-bold">~</span>
-                      <input type="date" value={febEnd} onChange={e => setFebEnd(e.target.value)} className="font-bold text-gray-800 px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
+                      <input type="date" value={febEnd} onChange={e => handleFebEndChange(e.target.value)} className="font-bold text-gray-800 px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div className="flex items-center">
+                      <input type="number" min="1" value={febTargetDays} onChange={e => handleFebTargetChange(e.target.value)} placeholder="목표 일수" className="w-24 px-3 py-1.5 border border-gray-300 rounded-md text-sm font-bold text-indigo-700 bg-indigo-50/50 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                   </div>
                 </div>
@@ -896,23 +932,23 @@
                 <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
                   <div className="text-sm font-semibold text-gray-600 mb-1">1학년</div>
                   <div className="text-2xl font-black text-indigo-600">
-                    {totals[1][1] + totals[2][1] + (hasFeb ? totals['feb'][1] : 0)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                    {totals[1][1] + totals[2][1] + getFebTotal(1)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
                   </div>
-                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][1]}일 + 2학기 {totals[2][1] + (hasFeb ? totals['feb'][1] : 0)}일</div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][1]}일 + 2학기 {totals[2][1] + getFebTotal(1)}일</div>
                 </div>
                 <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
                   <div className="text-sm font-semibold text-gray-600 mb-1">2학년</div>
                   <div className="text-2xl font-black text-indigo-600">
-                    {totals[1][2] + totals[2][2] + (hasFeb ? totals['feb'][2] : 0)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                    {totals[1][2] + totals[2][2] + getFebTotal(2)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
                   </div>
-                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][2]}일 + 2학기 {totals[2][2] + (hasFeb ? totals['feb'][2] : 0)}일</div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][2]}일 + 2학기 {totals[2][2] + getFebTotal(2)}일</div>
                 </div>
                 <div className="bg-white p-3 rounded-md border border-gray-200 shadow-sm">
                   <div className="text-sm font-semibold text-gray-600 mb-1">3학년</div>
                   <div className="text-2xl font-black text-indigo-600">
-                    {totals[1][3] + totals[2][3] + (hasFeb ? totals['feb'][3] : 0)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
+                    {totals[1][3] + totals[2][3] + getFebTotal(3)}<span className="text-sm font-medium text-gray-500 ml-1">일</span>
                   </div>
-                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][3]}일 + 2학기 {totals[2][3] + (hasFeb ? totals['feb'][3] : 0)}일</div>
+                  <div className="text-xs text-gray-400 mt-1">1학기 {totals[1][3]}일 + 2학기 {totals[2][3] + getFebTotal(3)}일</div>
                 </div>
               </div>
             </div>
@@ -922,8 +958,7 @@
           <SemesterTable 
             title={`1학기 (${s1Start} ~ ${s1End})`}
             semester={1}
-            startDate={s1Start}
-            endDate={s1End}
+            dateRanges={[{ start: s1Start, end: s1End }]}
             events={events}
             setEvents={setEvents}
             onDateClick={openModal}
@@ -935,8 +970,7 @@
             <SemesterTable 
               title={`여름방학 (${vacStartStr} ~ ${vacEndStr})`}
               semester={'vacation'}
-              startDate={vacStartStr}
-              endDate={vacEndStr}
+              dateRanges={[{ start: vacStartStr, end: vacEndStr }]}
               events={events}
               setEvents={setEvents}
               onDateClick={openModal}
@@ -946,25 +980,23 @@
           )}
 
           <SemesterTable 
-            title={`2학기 (${s2Start} ~ ${s2End})`}
+            title={`2학기 (${s2Start} ~ ${hasFeb && viewMode === 'viewer' ? febEnd : s2End})`}
             semester={2}
-            startDate={s2Start}
-            endDate={s2End}
+            dateRanges={hasFeb && viewMode === 'viewer' ? [{ start: s2Start, end: s2End }, { start: febStart, end: febEnd }] : [{ start: s2Start, end: s2End }]}
             events={events}
             setEvents={setEvents}
             onDateClick={openModal}
             onTotalsChange={handleTotalsChange}
             viewMode={viewMode}
-            annualTotals={!hasFeb ? annualTotals : undefined}
-            vacationInfo={!hasFeb ? vacationInfo : undefined}
+            annualTotals={viewMode === 'viewer' || !hasFeb ? annualTotals : undefined}
+            vacationInfo={viewMode === 'viewer' || !hasFeb ? vacationInfo : undefined}
           />
           
           {hasFeb && viewMode !== 'viewer' && (
             <SemesterTable 
               title={`겨울방학 (${formatDate(winterStartD)} ~ ${formatDate(winterEndD)})`}
               semester={'vacation'}
-              startDate={formatDate(winterStartD)}
-              endDate={formatDate(winterEndD)}
+              dateRanges={[{ start: formatDate(winterStartD), end: formatDate(winterEndD) }]}
               events={events}
               setEvents={setEvents}
               onDateClick={openModal}
@@ -973,12 +1005,11 @@
             />
           )}
 
-          {hasFeb && (
+          {hasFeb && viewMode !== 'viewer' && (
             <SemesterTable 
               title={`2월 학사일정 (${febStart} ~ ${febEnd})`}
               semester={'feb'}
-              startDate={febStart}
-              endDate={febEnd}
+              dateRanges={[{ start: febStart, end: febEnd }]}
               events={events}
               setEvents={setEvents}
               onDateClick={openModal}
