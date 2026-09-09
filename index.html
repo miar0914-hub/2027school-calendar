@@ -50,6 +50,7 @@
 
     const generateCalendarDates = (ranges) => {
       const dates = [];
+      if (!ranges || !Array.isArray(ranges)) return dates;
       ranges.forEach(range => {
         let currentDate = new Date(range.start);
         const end = new Date(range.end);
