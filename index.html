@@ -79,6 +79,7 @@
 
     const SemesterTable = ({ semester, title, dateRanges, events, setEvents, onDateClick, onTotalsChange, viewMode = 'edit', annualTotals = null, vacationInfo = null }) => {
       const dates = useMemo(() => generateCalendarDates(dateRanges), [JSON.stringify(dateRanges)]);
+      const endDate = dateRanges && dateRanges.length > 0 ? dateRanges[0].end : null;
       
       const weeks = useMemo(() => {
         const weeksData = [];
